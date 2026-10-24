@@ -11,6 +11,7 @@ import type {
   CardInstance,
   Character,
   Enemy,
+  FloatingNumber,
   LogEntry,
   Phase,
   QueuedCommand,
@@ -29,6 +30,7 @@ let UID = 0;
 const uid = () => `c${++UID}_${Math.random().toString(36).slice(2, 7)}`;
 
 let LOG_ID = 0;
+let FLOAT_ID = 0;
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
@@ -62,6 +64,10 @@ export interface GameState {
   activeAnim: string | null;
   /** True while the slots are full and the auto-launch is being dispatched. */
   launching: boolean;
+  /** Floating damage/heal numbers currently animating over units. */
+  floaters: FloatingNumber[];
+  /** Cumulative damage dealt to the enemy this measurement (the "TOTAL"). */
+  totalDamage: number;
 
   // actions
   init: () => void;
@@ -71,6 +77,12 @@ export interface GameState {
   assignToSlot: (cardUid: string) => void;
   unqueue: (cardUid: string) => void;
   moveCard: (fromIndex: number, toIndex: number) => void;
+  /**
+   * Drag one card onto another. If both share defId + level (and can level up)
+   * they fuse into a level+1 card; otherwise the dragged card is reordered to
+   * the target's position.
+   */
+  dropCardOn: (draggedUid: string, targetUid: string) => void;
   runMeasurement: () => Promise<void>;
   resetGame: () => void;
 }
@@ -138,8 +150,8 @@ function resolveFusions(hand: CardInstance[]): {
       b &&
       a.defId === b.defId &&
       a.level === b.level &&
-      a.level < 3 &&
-      !defA?.ultimate
+      a.level < 3 && // max 3 levels
+      !defA?.ultimate // ultimates never fuse
     ) {
       out.push({
         uid: uid(),
@@ -166,14 +178,24 @@ function resolveFusions(hand: CardInstance[]): {
 // Damage model
 // -------------------------------------------------------------------------
 
+/** Sum active buff/debuff magnitudes for a given stat (as a +/- percentage). */
+function statModifierPct(unit: { buffs: { magnitude?: number }[] } & object, stat: string): number {
+  // buffs carry an optional `stat` via the EffectTemplate they were built from
+  const list = (unit as { buffs: Array<{ magnitude?: number; stat?: string }> }).buffs ?? [];
+  return list.reduce((sum, b) => (b.stat === stat ? sum + (b.magnitude ?? 0) : sum), 0);
+}
+
 function computeCardDamage(
   caster: Character,
   card: CardInstance,
-  noise: number
+  noise: number,
+  enemy: Enemy
 ): { damage: number; crit: boolean; noiseDelta: number; note: string } {
   const def = CARD_DEF_BY_ID[card.defId];
   const levelScale = 1 + (card.level - 1) * 0.6; // lv1=1, lv2=1.6, lv3=2.2
-  let base = caster.attack * def.power * levelScale;
+  const atkBuffPct = statModifierPct(caster, "attack");
+  const effectiveAtk = caster.attack * (1 + atkBuffPct / 100);
+  let base = effectiveAtk * def.power * levelScale;
 
   let note = "";
   let noiseDelta = def.noise;
@@ -199,6 +221,16 @@ function computeCardDamage(
   // Crit
   const crit = Math.random() < caster.critChance;
   if (crit) base *= caster.critDamage;
+
+  // Enemy "damage taken" debuff (e.g. Forced Decoherence)
+  const vulnPct = statModifierPct(enemy, "damageTaken");
+  if (vulnPct !== 0) {
+    base *= 1 + vulnPct / 100;
+    note += ` · vuln +${vulnPct}%`;
+  }
+
+  // Attack buff note
+  if (atkBuffPct !== 0) note += ` · ATK +${atkBuffPct}%`;
 
   // Chaos fluctuation from the enemy buff (±10%)
   base *= rand(0.9, 1.1);
@@ -262,6 +294,8 @@ export const useGame = create<GameState>((set, get) => ({
   log: [],
   activeAnim: null,
   launching: false,
+  floaters: [],
+  totalDamage: 0,
 
   init: () => {
     UID = 0;
@@ -278,6 +312,8 @@ export const useGame = create<GameState>((set, get) => ({
       log: logLine([], "Sistema cuántico inicializado. Decoherencia estable.", "system"),
       activeAnim: null,
       launching: false,
+      floaters: [],
+      totalDamage: 0,
     });
     get().startTurn();
   },
@@ -322,8 +358,13 @@ export const useGame = create<GameState>((set, get) => ({
     const livingIdx = characters
       .map((c, i) => (c.alive ? i : -1))
       .filter((i) => i >= 0);
+    // Rotate the classical-ML attack pool each turn, then pick a target.
+    const chosen =
+      enemy.intentPool && enemy.intentPool.length
+        ? pick(enemy.intentPool)
+        : enemy.intent;
     enemy.intent = {
-      ...enemy.intent,
+      ...chosen,
       targetIndex: livingIdx.length ? pick(livingIdx) : undefined,
     };
 
@@ -409,6 +450,79 @@ export const useGame = create<GameState>((set, get) => ({
     });
   },
 
+  dropCardOn: (draggedUid, targetUid) => {
+    const s = get();
+    if (s.phase !== "orders" || s.launching) return;
+    if (draggedUid === targetUid) return;
+
+    const queued = new Set(s.queue.map((q) => q.cardUid));
+    // Cards currently staged in attack slots can't be reordered/fused.
+    if (queued.has(draggedUid) || queued.has(targetUid)) return;
+
+    const hand = [...s.hand];
+    const from = hand.findIndex((c) => c.uid === draggedUid);
+    const to = hand.findIndex((c) => c.uid === targetUid);
+    if (from < 0 || to < 0) return;
+
+    const dragged = hand[from];
+    const target = hand[to];
+    const def = CARD_DEF_BY_ID[dragged.defId];
+
+    const canFuse =
+      dragged.defId === target.defId &&
+      dragged.level === target.level &&
+      dragged.level < 3 && // max 3 levels
+      !def?.ultimate; // ultimates never fuse
+
+    const characters = clone(s.characters);
+    let log = s.log;
+
+    if (canFuse) {
+      // Build the fused card and replace the pair with a single level+1 card
+      // positioned where the target was.
+      const fusedCard: CardInstance = {
+        uid: uid(),
+        defId: dragged.defId,
+        level: (dragged.level + 1) as 1 | 2 | 3,
+        justFused: true,
+      };
+      // Remove both by uid, then insert the fused card at the target's slot.
+      const rest = hand.filter(
+        (c) => c.uid !== draggedUid && c.uid !== targetUid
+      );
+      // recompute target index inside `rest`
+      const insertAt = Math.min(
+        rest.length,
+        hand.filter((c, idx) => idx < to && c.uid !== draggedUid).length
+      );
+      rest.splice(insertAt, 0, fusedCard);
+
+      const owner = characters.find((c) => c.id === def.characterId);
+      if (owner && owner.moxie < owner.maxMoxie) owner.moxie += 1;
+      log = logLine(
+        log,
+        `Fusión manual — ${def.name} sube a Lv${fusedCard.level}. ${
+          owner?.name ?? "?"
+        } +1 Quant.`,
+        "fusion"
+      );
+      set({ hand: rest, characters, log });
+    } else {
+      // Not a fusion: reorder the dragged card to the target's position.
+      const [moved] = hand.splice(from, 1);
+      const newTo = hand.findIndex((c) => c.uid === targetUid);
+      hand.splice(newTo < 0 ? hand.length : newTo, 0, moved);
+      // Reordering may create a new adjacent identical pair -> auto-fuse.
+      const refused = resolveFusions(hand);
+      for (const f of refused.fusions) {
+        const o = characters.find((c) => c.id === f.characterId);
+        if (o && o.moxie < o.maxMoxie) o.moxie += 1;
+        log = logLine(log, `Fusión por adyacencia — ${o?.name} +1 Quant.`, "fusion");
+      }
+      set({ hand: refused.hand, characters, log });
+    }
+  },
+
   runMeasurement: async () => {
     const s = get();
     if (s.phase !== "orders") return;
@@ -417,12 +531,27 @@ export const useGame = create<GameState>((set, get) => ({
       return;
     }
 
-    set({ phase: "measurement", selectedCardUid: null, launching: false });
+    set({
+      phase: "measurement",
+      selectedCardUid: null,
+      launching: false,
+      floaters: [],
+      totalDamage: 0,
+    });
 
     let characters = clone(get().characters);
     let enemy = clone(get().enemy);
     let noise = get().noise;
     let log = get().log;
+
+    // Emit a floating number over a unit and auto-expire it after ~1.1s.
+    const addFloater = (f: Omit<FloatingNumber, "id">) => {
+      const id = ++FLOAT_ID;
+      set({ floaters: [...get().floaters, { ...f, id }] });
+      setTimeout(() => {
+        set({ floaters: get().floaters.filter((x) => x.id !== id) });
+      }, 1100);
+    };
 
     log = logLine(log, "— Fase de Medición: colapsando comandos —", "info");
     set({ log });
@@ -434,45 +563,112 @@ export const useGame = create<GameState>((set, get) => ({
       const caster = characters.find((c) => c.id === cmd.casterId);
       if (!caster || !caster.alive) continue;
 
+      const isSupport =
+        def.type === "Heal" || def.type === "Buff" || def.type === "Debuff";
+
       // set sprite state based on card type
       caster.spriteState = def.ultimate
         ? "ultimate"
         : def.type === "Physical"
         ? "attack-physical"
-        : "attack-logical";
+        : "attack-logical"; // Logical + all support cards use the cast gesture
       set({
         characters: clone(characters),
         activeAnim: caster.id,
       });
       await wait(def.ultimate ? 1300 : 750);
 
-      // compute + apply
-      const { damage, crit, noiseDelta, note } = computeCardDamage(
-        caster,
-        card,
-        noise
-      );
-      const ignoreShield =
-        def.id === "card_factor_01" ? 0.3 : def.ultimate && def.type === "Logical" ? 1 : 0;
-      applyDamageToEnemy(enemy, damage, ignoreShield);
-      noise = Math.max(0, noise + noiseDelta);
+      // Support effects scale with card level too (lv1=1, lv2=1.6, lv3=2.2).
+      const supportScale = 1 + (card.level - 1) * 0.6;
 
-      log = logLine(
-        log,
-        `${caster.name} lanza ${def.name} → ${damage.toLocaleString()} ${
-          crit ? "CRÍTICO " : ""
-        }dmg (${note}).`,
-        def.ultimate ? "ultimate" : "damage"
-      );
+      if (isSupport) {
+        // ---- Support resolution (no enemy damage) ----
+        if (def.type === "Heal") {
+          // target the living ally with the lowest HP ratio
+          const living = characters.filter((c) => c.alive);
+          const target =
+            living.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0] ?? caster;
+          const healed = Math.round(target.maxHp * (def.healPct ?? 0) * supportScale);
+          target.hp = Math.min(target.maxHp, target.hp + healed);
+          const shieldAdd = Math.round(target.maxHp * (def.shieldPct ?? 0) * supportScale);
+          if (shieldAdd > 0) target.shield += shieldAdd;
+          if (healed > 0) addFloater({ targetId: target.id, amount: healed, kind: "heal" });
+          log = logLine(
+            log,
+            `${caster.name} usa ${def.name} (Lv${card.level}) → +${healed.toLocaleString()} HP${
+              shieldAdd ? ` y +${shieldAdd.toLocaleString()} escudo` : ""
+            } a ${target.name}.`,
+            "heal"
+          );
+        } else if (def.type === "Buff" && def.grantBuff) {
+          const mag = Math.round(def.grantBuff.magnitude * supportScale);
+          const targets = def.buffTeam
+            ? characters.filter((c) => c.alive)
+            : [caster];
+          for (const t of targets) {
+            // refresh if already present, else add
+            t.buffs = t.buffs.filter((b) => b.id !== def.grantBuff!.id);
+            t.buffs.push({ ...def.grantBuff!, magnitude: mag });
+          }
+          log = logLine(
+            log,
+            `${caster.name} usa ${def.name} (Lv${card.level}) → ${def.grantBuff.name} (+${mag}% ${
+              def.grantBuff.stat
+            }) a ${def.buffTeam ? "todo el equipo" : caster.name}.`,
+            "fusion"
+          );
+        } else if (def.type === "Debuff" && def.applyDebuff) {
+          const mag = Math.round(def.applyDebuff.magnitude * supportScale);
+          enemy.buffs = enemy.buffs.filter((b) => b.id !== def.applyDebuff!.id);
+          enemy.buffs.push({ ...def.applyDebuff!, magnitude: mag });
+          log = logLine(
+            log,
+            `${caster.name} usa ${def.name} (Lv${card.level}) → ${def.applyDebuff.name} sobre ${enemy.name} (+${mag}% daño recibido).`,
+            "enemy"
+          );
+        }
+        noise = Math.max(0, noise + def.noise);
+      } else {
+        // ---- Damage resolution ----
+        const { damage, crit, noiseDelta, note } = computeCardDamage(
+          caster,
+          card,
+          noise,
+          enemy
+        );
+        const ignoreShield =
+          def.id === "card_factor_01" ? 0.3 : def.ultimate && def.type === "Logical" ? 1 : 0;
+        applyDamageToEnemy(enemy, damage, ignoreShield);
+        noise = Math.max(0, noise + noiseDelta);
 
-      // Quant charge: every normal card the character uses grants +1 Quant.
-      // The Ultimate consumes the full charge back to 0.
+        // Floating damage number + running total over the enemy.
+        addFloater({ targetId: enemy.id, amount: damage, kind: crit ? "crit" : "damage" });
+        set({ totalDamage: get().totalDamage + damage });
+
+        log = logLine(
+          log,
+          `${caster.name} lanza ${def.name} → ${damage.toLocaleString()} ${
+            crit ? "CRÍTICO " : ""
+          }dmg (${note}).`,
+          def.ultimate ? "ultimate" : "damage"
+        );
+        enemy.spriteState = "hit";
+      }
+
+      // Quant charge: a card grants Quant equal to its level (Lv1=+1 … Lv3=+3),
+      // capped at the character's max. The Ultimate consumes the full charge.
       if (def.ultimate) {
         caster.moxie = 0;
         log = logLine(log, `${caster.name} descarga su Quant con el Ultimate.`, "ultimate");
       } else if (caster.moxie < caster.maxMoxie) {
-        caster.moxie += 1;
-        if (caster.moxie >= caster.maxMoxie) {
+        const before = caster.moxie;
+        caster.moxie = Math.min(caster.maxMoxie, caster.moxie + card.level);
+        log = logLine(
+          log,
+          `${caster.name} +${caster.moxie - before} Quant (carta Lv${card.level}) → ${caster.moxie}/${caster.maxMoxie}.`,
+          "fusion"
+        );
+        if (caster.moxie >= caster.maxMoxie && before < caster.maxMoxie) {
           log = logLine(
             log,
             `¡${caster.name} alcanza ${caster.maxMoxie} Quant! Carta especial disponible.`,
@@ -480,7 +676,6 @@ export const useGame = create<GameState>((set, get) => ({
           );
         }
       }
-      enemy.spriteState = "hit";
       set({ characters: clone(characters), enemy: clone(enemy), noise, log });
       await wait(450);
 
@@ -499,7 +694,7 @@ export const useGame = create<GameState>((set, get) => ({
     if (!enemy.alive) {
       set({
         phase: "victory",
-        log: logLine(log, "El Primer Error ha sido factorizado. VICTORIA.", "system"),
+        log: logLine(log, "El modelo clásico ha sido superado por la ventaja cuántica. VICTORIA.", "system"),
       });
       return;
     }
@@ -516,29 +711,77 @@ export const useGame = create<GameState>((set, get) => ({
     await wait(700);
 
     const intent = enemy.intent;
-    const targetIdx =
-      intent.targetIndex != null && characters[intent.targetIndex]?.alive
-        ? intent.targetIndex
-        : characters.findIndex((c) => c.alive);
 
-    if (targetIdx >= 0) {
-      const target = characters[targetIdx];
-      const aff = affinity(enemy.architecture, target.architecture);
-      let dmg = Math.round(
-        enemy.attack * intent.power * affinityMultiplier(aff) * rand(0.9, 1.1)
-      );
-      applyDamageToCharacter(target, dmg);
-      // enemy attack imposes noise on the field
-      noise = noise + 3;
+    if (intent.kind === "shield") {
+      // Classical ML "regularization" — the model armours itself.
+      const gained = Math.round(enemy.maxHp * 0.06 * intent.power);
+      enemy.shield += gained;
+      const enemyNoise = intent.noise ?? 0;
+      if (enemyNoise) noise = noise + enemyNoise;
       log = logLine(
         get().log,
-        `${enemy.name} usa ${intent.name} sobre ${target.name} → ${dmg.toLocaleString()} dmg. +3 Ruido.`,
+        `${enemy.name} usa ${intent.name} → +${gained.toLocaleString()} de Escudo${
+          enemyNoise ? ` · +${enemyNoise} Ruido Estadístico` : ""
+        }.`,
         "enemy"
       );
-      if (!target.alive) {
-        log = logLine(log, `${target.name} ha caído.`, "system");
+      addFloater({ targetId: enemy.id, amount: gained, kind: "heal" });
+      set({ enemy: clone(enemy), noise, log });
+    } else if (intent.kind === "buff") {
+      // "Boosting" — the model strengthens its own attack for a few turns.
+      const mag = Math.round(20 * intent.power);
+      enemy.buffs = enemy.buffs.filter((b) => b.id !== "e_boost");
+      enemy.buffs.push({
+        id: "e_boost",
+        name: "Boosting",
+        kind: "buff",
+        description: `Ensamble de modelos débiles: +${mag}% de Ataque.`,
+        duration: 2,
+        magnitude: mag,
+        stat: "attack",
+      });
+      const enemyNoise = intent.noise ?? 0;
+      if (enemyNoise) noise = noise + enemyNoise;
+      log = logLine(
+        get().log,
+        `${enemy.name} usa ${intent.name} → Boosting (+${mag}% Ataque, 2 turnos)${
+          enemyNoise ? ` · +${enemyNoise} Ruido` : ""
+        }.`,
+        "enemy"
+      );
+      set({ enemy: clone(enemy), noise, log });
+    } else {
+      // --- Attack ---
+      const targetIdx =
+        intent.targetIndex != null && characters[intent.targetIndex]?.alive
+          ? intent.targetIndex
+          : characters.findIndex((c) => c.alive);
+
+      if (targetIdx >= 0) {
+        const target = characters[targetIdx];
+        const aff = affinity(enemy.architecture, target.architecture);
+        // enemy attack scales with its own "Boosting" buff if active
+        const atkBuff = statModifierPct(enemy, "attack");
+        const effAtk = enemy.attack * (1 + atkBuff / 100);
+        let dmg = Math.round(
+          effAtk * intent.power * affinityMultiplier(aff) * rand(0.9, 1.1)
+        );
+        applyDamageToCharacter(target, dmg);
+        addFloater({ targetId: target.id, amount: dmg, kind: "enemy-damage" });
+        const enemyNoise = intent.noise ?? 3;
+        noise = noise + enemyNoise;
+        log = logLine(
+          get().log,
+          `${enemy.name} usa ${intent.name} sobre ${target.name} → ${dmg.toLocaleString()} dmg${
+            atkBuff ? ` (ATK +${atkBuff}%)` : ""
+          }. +${enemyNoise} Ruido Estadístico.`,
+          "enemy"
+        );
+        if (!target.alive) {
+          log = logLine(log, `${target.name} ha caído.`, "system");
+        }
+        set({ characters: clone(characters), noise, log });
       }
-      set({ characters: clone(characters), noise, log });
     }
 
     await wait(500);
@@ -553,6 +796,8 @@ export const useGame = create<GameState>((set, get) => ({
         .map((b) => (b.duration > 0 ? { ...b, duration: b.duration - 1 } : b))
         .filter((b) => b.duration !== 0);
     characters.forEach((c) => (c.buffs = tick(c.buffs)));
+    // tick the enemy's own buffs (Boosting) and player-applied debuffs too
+    enemy.buffs = tick(enemy.buffs);
 
     const anyAlive = characters.some((c) => c.alive);
     set({

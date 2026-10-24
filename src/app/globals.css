@@ -62,3 +62,42 @@ body {
     linear-gradient(90deg, rgba(78, 168, 255, 0.05) 1px, transparent 1px);
   background-size: 40px 40px;
 }
+
+/* Crisp pixel-art rendering for sprites and backgrounds */
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Pixel sprite container: renders a CSS-grid of tiny cells with hard edges */
+.pixel-grid {
+  display: grid;
+  image-rendering: pixelated;
+}
+
+/* Animated drifting fog layer for the battle background */
+@keyframes fogDrift {
+  0% { transform: translateX(-5%); }
+  100% { transform: translateX(5%); }
+}
+.fog-layer {
+  animation: fogDrift 18s ease-in-out infinite alternate;
+}
+
+/* Twinkle for ambient particles / embers */
+@keyframes twinkle {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+.twinkle {
+  animation: twinkle 2.4s ease-in-out infinite;
+}
+
+/* Subtle pixel-step bob (used for idle sprites, steps instead of smooth) */
+@keyframes pixelBob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.pixel-bob {
+  animation: pixelBob 1.4s steps(2, end) infinite;
+}

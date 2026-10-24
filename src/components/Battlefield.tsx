@@ -7,8 +7,10 @@ import { CharacterSprite } from "./CharacterSprite";
 import { FloatingBars } from "./FloatingBars";
 import { CharacterHoverPanel } from "./CharacterHoverPanel";
 import { EnemyUnit } from "./EnemyUnit";
-import { EnemyIntentBanner } from "./EnemyIntentBanner";
 import { AttackSlots } from "./AttackSlots";
+import { PixelBackground } from "./pixel/PixelBackground";
+import { FloatingNumbers } from "./FloatingNumbers";
+import { TotalDamage } from "./TotalDamage";
 
 export function Battlefield() {
   const characters = useGame((s) => s.characters);
@@ -17,29 +19,21 @@ export function Battlefield() {
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      {/* Atmospheric background */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(1200px 500px at 70% 20%, rgba(40,60,100,0.45), transparent 60%)," +
-            "radial-gradient(900px 600px at 20% 90%, rgba(80,30,60,0.35), transparent 60%)," +
-            "linear-gradient(180deg, #0a1018 0%, #070a11 55%, #05070c 100%)",
-        }}
-      />
-      <div className="absolute inset-0 grid-overlay opacity-40" />
-      <div className="absolute inset-0 scanlines opacity-50" />
-      {/* distant fog */}
-      <div className="absolute inset-x-0 top-1/3 h-40 bg-gradient-to-b from-slate-400/10 to-transparent blur-2xl" />
+      {/* Anime pixel-art battle backdrop (dark foggy ruined city) */}
+      <PixelBackground />
 
-      {/* Enemy intent (top-left) */}
-      <div className="absolute left-4 top-20 z-20">
-        <EnemyIntentBanner />
+      {/* Running TOTAL damage tally (upper-center, over the field) */}
+      <div className="absolute left-[55%] top-[12%] z-30 -translate-x-1/2">
+        <TotalDamage />
       </div>
 
       {/* Enemy (right / center) */}
       <div className="absolute right-[12%] top-[26%] z-10">
-        <EnemyUnit enemy={enemy} />
+        <div className="relative">
+          <EnemyUnit enemy={enemy} />
+          {/* floating damage numbers over the enemy */}
+          <FloatingNumbers targetId={enemy.id} />
+        </div>
       </div>
 
       {/* Attack slots — translucent staging area between allies and enemy */}
@@ -62,7 +56,11 @@ export function Battlefield() {
               <FloatingBars character={ch} />
             </div>
 
-            <CharacterSprite character={ch} />
+            <div className="relative">
+              <CharacterSprite character={ch} />
+              {/* floating damage / heal numbers over this ally */}
+              <FloatingNumbers targetId={ch.id} />
+            </div>
 
             {/* Hover panel */}
             <AnimatePresence>

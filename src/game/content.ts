@@ -94,31 +94,86 @@ export const CHARACTERS: Character[] = [
 // Enemy
 // ============================================================================
 
+// The adversary embodies *classical* machine learning & statistics — the old
+// paradigm the quantum team must overcome. Its attacks are optimizers, biases
+// and overfitting; the field "Ruido" reads as statistical/overfitting noise.
 export const ENEMY: Enemy = {
   id: "enemy_01",
-  name: "El Primer Error — Lorentz Butterfly",
+  name: "El Modelo Sobreajustado — Regresor Determinista",
   architecture: "superconducting",
-  hp: 48000,
-  maxHp: 48000,
-  shield: 3000,
+  // Tuned so a well-played team clears it in about 4 turns.
+  hp: 5200,
+  maxHp: 5200,
+  shield: 500,
   attack: 480,
   realityDef: 260,
   mentalDef: 300,
   alive: true,
   intent: {
     kind: "attack",
-    name: "El Aleteo del Primario",
+    name: "Descenso de Gradiente",
     description:
-      "Ataque a 1 objetivo. Inflige daño mental e impone 3 cargas de [Ruido] antes de golpear.",
+      "Minimiza la función de pérdida en dirección al objetivo: daño a 1 aliado e impone 3 cargas de [Ruido Estadístico].",
     power: 1.4,
+    noise: 3,
   },
+  intentPool: [
+    {
+      kind: "attack",
+      name: "Descenso de Gradiente",
+      description:
+        "Minimiza la función de pérdida en dirección al objetivo: daño a 1 aliado e impone 3 cargas de [Ruido Estadístico].",
+      power: 1.4,
+      noise: 3,
+    },
+    {
+      kind: "attack",
+      name: "Retropropagación del Error",
+      description:
+        "Propaga el error capa a capa: golpe fuerte a 1 aliado que escala con el Ruido acumulado. +2 Ruido.",
+      power: 1.7,
+      noise: 2,
+    },
+    {
+      kind: "attack",
+      name: "Sobreajuste (Overfitting)",
+      description:
+        "Memoriza el patrón del objetivo: daño alto a 1 aliado e impone 4 cargas de [Ruido Estadístico].",
+      power: 1.55,
+      noise: 4,
+    },
+    {
+      kind: "attack",
+      name: "Clasificador Bayesiano",
+      description:
+        "Asigna la clase de máxima verosimilitud: daño preciso y de baja varianza a 1 aliado. +1 Ruido.",
+      power: 1.3,
+      noise: 1,
+    },
+    {
+      kind: "shield",
+      name: "Regularización L2",
+      description:
+        "Penaliza los pesos grandes para generalizar: el modelo gana un Escudo defensivo y no ataca este turno.",
+      power: 1.0,
+      noise: 0,
+    },
+    {
+      kind: "buff",
+      name: "Boosting (AdaBoost)",
+      description:
+        "Ensambla clasificadores débiles en uno fuerte: el modelo aumenta su Ataque durante 2 turnos.",
+      power: 1.0,
+      noise: 0,
+    },
+  ],
   buffs: [
     {
-      id: "e_chaos",
-      name: "Sensibilidad Caótica",
+      id: "e_variance",
+      name: "Alta Varianza",
       kind: "buff",
       description:
-        "Efecto mariposa: el daño recibido fluctúa ±10% de forma impredecible.",
+        "Compromiso sesgo-varianza: el daño recibido fluctúa ±10% de forma estadística.",
       duration: -1,
     },
   ],
@@ -274,6 +329,77 @@ export const CARD_DEFS: CardDef[] = [
       "Al medir, la función de onda colapsa a un único autoestado. El resultado probabilístico se vuelve un hecho clásico definitivo.",
     noise: 4,
     ultimate: true,
+  },
+
+  // ---- Support cards: Heal / Buff / Debuff ----
+  // Heal (Shor) — Quantum Error Correction restores integrity + shield.
+  {
+    id: "card_qec_heal",
+    characterId: "char_03",
+    name: "Corrección de Errores",
+    type: "Heal",
+    animationTrigger: "anim_support_heal",
+    level: 1,
+    power: 0,
+    combatEffect:
+      "Restaura 30% de la Integridad del Sistema del aliado más herido y le otorga un Escudo de Coherencia (15% de su HP máx).",
+    quantumConceptTitle: "Corrección de Errores Cuánticos (QEC)",
+    quantumConcept:
+      "La QEC codifica un cúbit lógico en varios físicos para detectar y revertir errores sin medir la información cuántica directamente.",
+    noise: -1,
+    healPct: 0.3,
+    shieldPct: 0.15,
+  },
+  // Buff (Grover) — Entanglement links the team, boosting attack.
+  {
+    id: "card_entangle_buff",
+    characterId: "char_02",
+    name: "Entrelazamiento",
+    type: "Buff",
+    animationTrigger: "anim_support_buff",
+    level: 1,
+    power: 0,
+    combatEffect:
+      "Entrelaza al equipo: todos los aliados vivos ganan +18% de Ataque durante 2 turnos.",
+    quantumConceptTitle: "Entrelazamiento Cuántico",
+    quantumConcept:
+      "Dos cúbits entrelazados comparten un estado conjunto: medir uno determina al instante el resultado del otro, sin importar la distancia.",
+    noise: -1,
+    buffTeam: true,
+    grantBuff: {
+      id: "b_entangle",
+      name: "Entrelazamiento",
+      kind: "buff",
+      description: "+18% de Ataque por enlace cuántico compartido.",
+      duration: 2,
+      magnitude: 18,
+      stat: "attack",
+    },
+  },
+  // Debuff (Hadamard) — Forced decoherence makes the enemy take more damage.
+  {
+    id: "card_decohere_debuff",
+    characterId: "char_01",
+    name: "Decoherencia Forzada",
+    type: "Debuff",
+    animationTrigger: "anim_support_debuff",
+    level: 1,
+    power: 0,
+    combatEffect:
+      "Colapsa la coherencia del enemigo: recibe +25% de daño durante 2 turnos.",
+    quantumConceptTitle: "Decoherencia",
+    quantumConcept:
+      "La decoherencia es la pérdida de superposición cuando un sistema cuántico interactúa con su entorno, degradando su ventaja computacional.",
+    noise: 1,
+    applyDebuff: {
+      id: "d_decohere",
+      name: "Decoherencia Forzada",
+      kind: "debuff",
+      description: "+25% de daño recibido mientras dure la decoherencia.",
+      duration: 2,
+      magnitude: 25,
+      stat: "damageTaken",
+    },
   },
 ];
 

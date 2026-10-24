@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import { ARCHITECTURE_META } from "@/game/affinity";
 import type { Enemy } from "@/game/types";
+import { PixelSprite } from "./pixel/PixelSprite";
+import { SPRITE_ENEMY } from "./pixel/spriteData";
 
 export function EnemyUnit({ enemy }: { enemy: Enemy }) {
   const meta = ARCHITECTURE_META[enemy.architecture];
@@ -52,28 +54,27 @@ export function EnemyUnit({ enemy }: { enemy: Enemy }) {
       </div>
 
       <motion.div
-        className={state === "idle" ? "animate-float" : ""}
+        className={`relative ${state === "idle" ? "animate-float" : ""}`}
         animate={anim}
       >
+        {/* ominous backlight halo */}
         <div
-          className="relative flex items-center justify-center rounded-[40%_60%_55%_45%] border"
-          style={{
-            width: 190,
-            height: 150,
-            background:
-              "radial-gradient(circle at 50% 35%, rgba(120,20,40,0.85), rgba(10,0,5,0.95))",
-            borderColor: "#7f1d1d",
-            boxShadow: "0 0 40px rgba(180,20,40,0.4), inset 0 0 40px rgba(0,0,0,0.8)",
-          }}
-        >
-          {/* glitching core */}
-          <div className="animate-glitch text-5xl opacity-80" style={{ color: meta.color }}>
-            ✺
-          </div>
-          {/* wing shards */}
-          <div className="absolute -left-6 top-6 h-24 w-10 -rotate-12 rounded-full bg-gradient-to-b from-red-900/70 to-transparent blur-[2px]" />
-          <div className="absolute -right-6 top-6 h-24 w-10 rotate-12 rounded-full bg-gradient-to-b from-red-900/70 to-transparent blur-[2px]" />
-        </div>
+          className="absolute left-1/2 top-1/2 -z-10 h-44 w-56 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl"
+          style={{ background: "radial-gradient(circle, rgba(180,20,40,0.35), transparent 70%)" }}
+        />
+        <PixelSprite
+          rows={SPRITE_ENEMY.rows}
+          palette={SPRITE_ENEMY.palette}
+          scale={6}
+          className="pixelated drop-shadow-[0_8px_10px_rgba(0,0,0,0.7)]"
+        />
+        {/* glitch flicker over the core while idle */}
+        {state === "idle" && (
+          <div
+            className="animate-glitch pointer-events-none absolute left-1/2 top-[42%] h-6 w-6 -translate-x-1/2 rounded-full opacity-60 blur-[1px]"
+            style={{ background: meta.color }}
+          />
+        )}
       </motion.div>
 
       {/* Architecture tag */}

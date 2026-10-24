@@ -12,6 +12,7 @@ const TYPE_STYLE = {
     from: "#7c2d12",
     to: "#b45309",
     accent: "#f4b740",
+    icon: "⚔",
   },
   Logical: {
     label: "Logical Qubit",
@@ -19,6 +20,31 @@ const TYPE_STYLE = {
     from: "#1e3a5f",
     to: "#4c1d95",
     accent: "#8fcaff",
+    icon: "✶",
+  },
+  Heal: {
+    label: "Corrección",
+    tag: "CURACIÓN · +ESCUDO",
+    from: "#14532d",
+    to: "#047857",
+    accent: "#7cf29a",
+    icon: "✚",
+  },
+  Buff: {
+    label: "Refuerzo",
+    tag: "BUFF DE EQUIPO",
+    from: "#713f12",
+    to: "#a16207",
+    accent: "#ffd24a",
+    icon: "▲",
+  },
+  Debuff: {
+    label: "Supresión",
+    tag: "DEBUFF AL ENEMIGO",
+    from: "#4a1d4a",
+    to: "#7e1d6e",
+    accent: "#e879f9",
+    icon: "▼",
   },
 } as const;
 
@@ -90,7 +116,7 @@ export function Card({
       {/* Art panel placeholder */}
       <div className="mx-2 mt-6 h-16 rounded bg-black/30 flex items-center justify-center overflow-hidden">
         <span className="text-3xl opacity-40" style={{ color: ts.accent }}>
-          {def.type === "Physical" ? "⚔" : "✶"}
+          {ts.icon}
         </span>
       </div>
 
@@ -106,7 +132,15 @@ export function Card({
 
       {/* bottom meta */}
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between rounded-b-lg bg-black/40 px-2 py-1 text-[8px] text-white/60">
-        <span>PWR {(def.power * levelScale).toFixed(2)}×</span>
+        <span>
+          {def.type === "Heal"
+            ? `+${Math.round((def.healPct ?? 0) * 100 * levelScale)}% HP`
+            : def.type === "Buff"
+            ? `+${Math.round((def.grantBuff?.magnitude ?? 0) * levelScale)}% ATK`
+            : def.type === "Debuff"
+            ? `+${Math.round((def.applyDebuff?.magnitude ?? 0) * levelScale)}% vuln`
+            : `PWR ${(def.power * levelScale).toFixed(2)}×`}
+        </span>
         <span>{def.noise >= 0 ? `+${def.noise}` : def.noise} Ruido</span>
       </div>
 

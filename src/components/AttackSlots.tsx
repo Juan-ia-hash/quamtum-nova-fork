@@ -5,8 +5,11 @@ import { useGame, ATTACK_SLOTS } from "@/game/store";
 import { CARD_DEF_BY_ID } from "@/game/content";
 
 const TYPE_ACCENT = {
-  Physical: { accent: "#f4b740", from: "rgba(124,45,18,0.55)", to: "rgba(180,83,9,0.55)" },
-  Logical: { accent: "#8fcaff", from: "rgba(30,58,95,0.55)", to: "rgba(76,29,149,0.55)" },
+  Physical: { accent: "#f4b740", from: "rgba(124,45,18,0.55)", to: "rgba(180,83,9,0.55)", icon: "⚔" },
+  Logical: { accent: "#8fcaff", from: "rgba(30,58,95,0.55)", to: "rgba(76,29,149,0.55)", icon: "✶" },
+  Heal: { accent: "#7cf29a", from: "rgba(20,83,45,0.55)", to: "rgba(4,120,87,0.55)", icon: "✚" },
+  Buff: { accent: "#ffd24a", from: "rgba(113,63,18,0.55)", to: "rgba(161,98,7,0.55)", icon: "▲" },
+  Debuff: { accent: "#e879f9", from: "rgba(74,29,74,0.55)", to: "rgba(126,29,110,0.55)", icon: "▼" },
 } as const;
 
 /**
