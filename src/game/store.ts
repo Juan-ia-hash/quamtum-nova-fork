@@ -18,6 +18,9 @@ import type {
 
 const HAND_SIZE = 6;
 
+/** Number of attack slots that must be filled to auto-launch the attack. */
+export const ATTACK_SLOTS = 3;
+
 // -------------------------------------------------------------------------
 // Small helpers
 // -------------------------------------------------------------------------
@@ -49,9 +52,6 @@ export interface GameState {
   hand: CardInstance[];
   phase: Phase;
   turn: number;
-  /** Action Points available this turn (1 per living ally). */
-  ap: number;
-  maxAp: number;
   /** Accumulated field "Ruido" (noise). Physical adds, Logical consumes. */
   noise: number;
   /** Queued commands during the Orders phase (cardUid -> command). */
@@ -60,12 +60,15 @@ export interface GameState {
   log: LogEntry[];
   /** Transient uid currently playing an attack animation (for sequencing). */
   activeAnim: string | null;
+  /** True while the slots are full and the auto-launch is being dispatched. */
+  launching: boolean;
 
   // actions
   init: () => void;
   startTurn: () => void;
   selectCard: (uid: string | null) => void;
-  queueCommand: (cardUid: string, casterId: string, targetEnemyId: string) => void;
+  /** Assign a card to the next free attack slot. */
+  assignToSlot: (cardUid: string) => void;
   unqueue: (cardUid: string) => void;
   moveCard: (fromIndex: number, toIndex: number) => void;
   runMeasurement: () => Promise<void>;
@@ -253,13 +256,12 @@ export const useGame = create<GameState>((set, get) => ({
   hand: [],
   phase: "deal",
   turn: 0,
-  ap: 0,
-  maxAp: 0,
   noise: 0,
   queue: [],
   selectedCardUid: null,
   log: [],
   activeAnim: null,
+  launching: false,
 
   init: () => {
     UID = 0;
@@ -270,13 +272,12 @@ export const useGame = create<GameState>((set, get) => ({
       hand: [],
       phase: "deal",
       turn: 0,
-      ap: 0,
-      maxAp: 0,
       noise: 0,
       queue: [],
       selectedCardUid: null,
       log: logLine([], "Sistema cuántico inicializado. Decoherencia estable.", "system"),
       activeAnim: null,
+      launching: false,
     });
     get().startTurn();
   },
@@ -302,7 +303,7 @@ export const useGame = create<GameState>((set, get) => ({
       if (owner && owner.moxie < owner.maxMoxie) owner.moxie += 1;
       log = logLine(
         log,
-        `Fusión automática — ${owner?.name ?? "?"} gana +1 Moxie (${owner?.moxie}/5).`,
+        `Fusión automática — ${owner?.name ?? "?"} gana +1 Quant (${owner?.moxie}/5).`,
         "fusion"
       );
     }
@@ -315,9 +316,6 @@ export const useGame = create<GameState>((set, get) => ({
       const owner = characters.find((c) => c.id === f.characterId);
       if (owner && owner.moxie < owner.maxMoxie) owner.moxie += 1;
     }
-
-    // Phase 3: AP = living characters
-    const living = characters.filter((c) => c.alive).length;
 
     // Telegraph enemy intent for this turn
     const enemy = clone(s.enemy);
@@ -335,38 +333,48 @@ export const useGame = create<GameState>((set, get) => ({
       hand: hand.map((c) => ({ ...c, justFused: false })),
       turn: s.turn + 1,
       phase: "orders",
-      ap: living,
-      maxAp: living,
       noise: s.noise,
       queue: [],
       selectedCardUid: null,
-      log: logLine(log, `— Turno ${s.turn + 1} · Fase de Órdenes (${living} AP) —`, "info"),
+      launching: false,
+      log: logLine(log, `— Turno ${s.turn + 1} · Fase de Órdenes —`, "info"),
     });
   },
 
   selectCard: (uid) => set({ selectedCardUid: uid }),
 
-  queueCommand: (cardUid, casterId, targetEnemyId) => {
+  // Assign a card directly to the next free attack slot. When the slots fill
+  // up (ATTACK_SLOTS) the attack launches automatically toward the enemy.
+  assignToSlot: (cardUid) => {
     const s = get();
-    if (s.phase !== "orders") return;
-    const already = s.queue.find((q) => q.cardUid === cardUid);
-    if (already) return;
-    if (s.ap <= 0) {
-      set({ log: logLine(s.log, "Sin AP suficiente para emitir el comando.", "system") });
+    if (s.phase !== "orders" || s.launching) return;
+    if (s.queue.find((q) => q.cardUid === cardUid)) return;
+    if (s.queue.length >= ATTACK_SLOTS) {
+      set({ log: logLine(s.log, "Los 3 slots de ataque ya están llenos.", "system") });
       return;
     }
+    const card = s.hand.find((c) => c.uid === cardUid);
+    if (!card) return;
+    const def = CARD_DEF_BY_ID[card.defId];
+    const queue = [...s.queue, { cardUid, casterId: def.characterId, targetEnemyId: s.enemy.id }];
+    const slotIndex = queue.length;
     set({
-      queue: [...s.queue, { cardUid, casterId, targetEnemyId }],
-      ap: s.ap - 1,
+      queue,
       selectedCardUid: null,
-      log: logLine(
-        s.log,
-        `Comando en cola: ${CARD_DEF_BY_ID[
-          s.hand.find((c) => c.uid === cardUid)?.defId ?? ""
-        ]?.name}.`,
-        "info"
-      ),
+      log: logLine(s.log, `Slot ${slotIndex}/${ATTACK_SLOTS} cargado: ${def.name}.`, "info"),
     });
+
+    // Auto-launch once all three slots are occupied.
+    if (queue.length >= ATTACK_SLOTS) {
+      set({
+        launching: true,
+        log: logLine(get().log, "— Slots completos: iniciando ataque —", "info"),
+      });
+      // defer so the UI can paint the full third slot before the sequence runs
+      setTimeout(() => {
+        void get().runMeasurement();
+      }, 420);
+    }
   },
 
   unqueue: (cardUid) => {
@@ -374,35 +382,29 @@ export const useGame = create<GameState>((set, get) => ({
     if (!s.queue.find((q) => q.cardUid === cardUid)) return;
     set({
       queue: s.queue.filter((q) => q.cardUid !== cardUid),
-      ap: Math.min(s.maxAp, s.ap + 1),
     });
   },
 
-  // Moving a card manually costs 1 AP (Spec §4.3).
+  // Reorder a card in hand (free — no action-point cost).
   moveCard: (fromIndex, toIndex) => {
     const s = get();
     if (s.phase !== "orders") return;
     if (fromIndex === toIndex) return;
-    if (s.ap <= 0) {
-      set({ log: logLine(s.log, "Mover una carta cuesta 1 AP — sin AP.", "system") });
-      return;
-    }
     const hand = [...s.hand];
     const [moved] = hand.splice(fromIndex, 1);
     hand.splice(toIndex, 0, moved);
     // Manual moves can create new adjacencies -> resolve fusions
     const fused = resolveFusions(hand);
     const characters = clone(s.characters);
-    let log = logLine(s.log, "Carta reordenada (-1 AP).", "info");
+    let log = s.log;
     for (const f of fused.fusions) {
       const owner = characters.find((c) => c.id === f.characterId);
       if (owner && owner.moxie < owner.maxMoxie) owner.moxie += 1;
-      log = logLine(log, `Fusión por movimiento — ${owner?.name} +1 Moxie.`, "fusion");
+      log = logLine(log, `Fusión por movimiento — ${owner?.name} +1 Quant.`, "fusion");
     }
     set({
       hand: fused.hand,
       characters,
-      ap: s.ap - 1,
       log,
     });
   },
@@ -415,7 +417,7 @@ export const useGame = create<GameState>((set, get) => ({
       return;
     }
 
-    set({ phase: "measurement", selectedCardUid: null });
+    set({ phase: "measurement", selectedCardUid: null, launching: false });
 
     let characters = clone(get().characters);
     let enemy = clone(get().enemy);
@@ -455,10 +457,6 @@ export const useGame = create<GameState>((set, get) => ({
       applyDamageToEnemy(enemy, damage, ignoreShield);
       noise = Math.max(0, noise + noiseDelta);
 
-      // gain moxie for using a card
-      if (caster.moxie < caster.maxMoxie && !def.ultimate) caster.moxie += 1;
-      if (def.ultimate) caster.moxie = 0; // ultimate consumes the charge
-
       log = logLine(
         log,
         `${caster.name} lanza ${def.name} → ${damage.toLocaleString()} ${
@@ -466,6 +464,22 @@ export const useGame = create<GameState>((set, get) => ({
         }dmg (${note}).`,
         def.ultimate ? "ultimate" : "damage"
       );
+
+      // Quant charge: every normal card the character uses grants +1 Quant.
+      // The Ultimate consumes the full charge back to 0.
+      if (def.ultimate) {
+        caster.moxie = 0;
+        log = logLine(log, `${caster.name} descarga su Quant con el Ultimate.`, "ultimate");
+      } else if (caster.moxie < caster.maxMoxie) {
+        caster.moxie += 1;
+        if (caster.moxie >= caster.maxMoxie) {
+          log = logLine(
+            log,
+            `¡${caster.name} alcanza ${caster.maxMoxie} Quant! Carta especial disponible.`,
+            "ultimate"
+          );
+        }
+      }
       enemy.spriteState = "hit";
       set({ characters: clone(characters), enemy: clone(enemy), noise, log });
       await wait(450);
@@ -522,7 +536,7 @@ export const useGame = create<GameState>((set, get) => ({
         "enemy"
       );
       if (!target.alive) {
-        log = logLine(log, `${target.name} ha caído. Capacidad de AP reducida.`, "system");
+        log = logLine(log, `${target.name} ha caído.`, "system");
       }
       set({ characters: clone(characters), noise, log });
     }

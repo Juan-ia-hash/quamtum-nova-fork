@@ -43,28 +43,34 @@ export function FloatingBars({ character }: { character: Character }) {
         </div>
       )}
 
-      {/* Moxie pips 0..5 */}
-      <div className="mt-1 flex items-center gap-0.5">
+      {/* Quant spheres 0..5 — one fills per card the character uses.
+          When all 5 are lit the Ultimate card becomes available. */}
+      <div className="mt-1 flex items-center justify-center gap-1">
         {Array.from({ length: character.maxMoxie }).map((_, i) => {
           const filled = i < character.moxie;
           const full = character.moxie >= character.maxMoxie;
+          const color = full ? "#ffd24a" : meta.color;
           return (
             <div
               key={i}
-              className={`h-1.5 flex-1 rounded-sm transition-all ${
+              className={`h-2.5 w-2.5 rounded-full border transition-all ${
                 full ? "animate-pulse" : ""
               }`}
               style={{
+                borderColor: filled ? color : "rgba(255,255,255,0.2)",
                 background: filled
-                  ? full
-                    ? "#ffd24a"
-                    : meta.color
-                  : "rgba(255,255,255,0.12)",
-                boxShadow: filled ? `0 0 6px ${full ? "#ffd24a" : meta.color}` : "none",
+                  ? `radial-gradient(circle at 35% 30%, #ffffff, ${color} 70%)`
+                  : "rgba(255,255,255,0.06)",
+                boxShadow: filled ? `0 0 7px ${color}` : "none",
               }}
             />
           );
         })}
+        {character.moxie >= character.maxMoxie && (
+          <span className="ml-0.5 text-[8px] font-display uppercase tracking-wide text-quantum-moxie text-glow">
+            ULT
+          </span>
+        )}
       </div>
     </div>
   );

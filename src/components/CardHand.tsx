@@ -1,8 +1,7 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import { useGame } from "@/game/store";
-import { CARD_DEF_BY_ID } from "@/game/content";
+import { AnimatePresence } from "framer-motion";
+import { useGame, ATTACK_SLOTS } from "@/game/store";
 import { Card } from "./Card";
 
 export function CardHand() {
@@ -10,48 +9,33 @@ export function CardHand() {
   const phase = useGame((s) => s.phase);
   const queue = useGame((s) => s.queue);
   const selected = useGame((s) => s.selectedCardUid);
-  const enemy = useGame((s) => s.enemy);
-  const ap = useGame((s) => s.ap);
-  const selectCard = useGame((s) => s.selectCard);
-  const queueCommand = useGame((s) => s.queueCommand);
+  const launching = useGame((s) => s.launching);
+  const assignToSlot = useGame((s) => s.assignToSlot);
   const unqueue = useGame((s) => s.unqueue);
   const moveCard = useGame((s) => s.moveCard);
 
   const queuedUids = new Set(queue.map((q) => q.cardUid));
-  const canAct = phase === "orders";
+  const canAct = phase === "orders" && !launching;
+  const slotsFull = queue.length >= ATTACK_SLOTS;
 
   const handleCardClick = (uid: string) => {
     if (!canAct) return;
+    // clicking a card already in a slot releases it
     if (queuedUids.has(uid)) {
       unqueue(uid);
       return;
     }
-    // toggle selection; a selected card is confirmed by clicking the enemy
-    selectCard(selected === uid ? null : uid);
-  };
-
-  const confirmOnEnemy = () => {
-    if (!selected || !canAct) return;
-    const def = CARD_DEF_BY_ID[hand.find((c) => c.uid === selected)!.defId];
-    queueCommand(selected, def.characterId, enemy.id);
+    // otherwise drop it into the next free attack slot
+    assignToSlot(uid);
   };
 
   return (
     <div className="relative">
-      {/* Target hint when a card is selected */}
-      <AnimatePresence>
-        {selected && canAct && (
-          <motion.button
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            onClick={confirmOnEnemy}
-            className="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full border border-quantum-gold/70 bg-quantum-gold/15 px-4 py-1.5 text-xs font-display text-quantum-gold hover:bg-quantum-gold/25"
-          >
-            ▶ Confirmar objetivo: {enemy.name.split("—")[0].trim()} (−1 AP)
-          </motion.button>
-        )}
-      </AnimatePresence>
+      <div className="mb-2 text-center text-[10px] uppercase tracking-[0.25em] text-white/40">
+        {slotsFull
+          ? "Secuencia completa — lanzando ataque"
+          : `Elige ${ATTACK_SLOTS - queue.length} carta(s) para llenar los slots de ataque`}
+      </div>
 
       <div className="flex items-end justify-center gap-2 px-4">
         <AnimatePresence mode="popLayout">
@@ -63,22 +47,22 @@ export function CardHand() {
                 queued={queuedUids.has(card.uid)}
                 onClick={() => handleCardClick(card.uid)}
               />
-              {/* Manual move arrows (cost 1 AP) */}
+              {/* Manual move arrows (free reorder) */}
               {canAct && !queuedUids.has(card.uid) && (
                 <div className="absolute -bottom-6 left-1/2 flex -translate-x-1/2 gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">
                   <button
-                    disabled={i === 0 || ap <= 0}
+                    disabled={i === 0}
                     onClick={() => moveCard(i, i - 1)}
                     className="rounded bg-black/60 px-1.5 text-[10px] text-white/70 disabled:opacity-20"
-                    title="Mover izquierda (−1 AP)"
+                    title="Mover izquierda"
                   >
                     ◀
                   </button>
                   <button
-                    disabled={i === hand.length - 1 || ap <= 0}
+                    disabled={i === hand.length - 1}
                     onClick={() => moveCard(i, i + 1)}
                     className="rounded bg-black/60 px-1.5 text-[10px] text-white/70 disabled:opacity-20"
-                    title="Mover derecha (−1 AP)"
+                    title="Mover derecha"
                   >
                     ▶
                   </button>

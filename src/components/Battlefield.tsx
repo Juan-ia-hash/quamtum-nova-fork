@@ -8,6 +8,7 @@ import { FloatingBars } from "./FloatingBars";
 import { CharacterHoverPanel } from "./CharacterHoverPanel";
 import { EnemyUnit } from "./EnemyUnit";
 import { EnemyIntentBanner } from "./EnemyIntentBanner";
+import { AttackSlots } from "./AttackSlots";
 
 export function Battlefield() {
   const characters = useGame((s) => s.characters);
@@ -39,6 +40,11 @@ export function Battlefield() {
       {/* Enemy (right / center) */}
       <div className="absolute right-[12%] top-[26%] z-10">
         <EnemyUnit enemy={enemy} />
+      </div>
+
+      {/* Attack slots — translucent staging area between allies and enemy */}
+      <div className="absolute bottom-[30%] left-1/2 z-20 -translate-x-1/2">
+        <AttackSlots />
       </div>
 
       {/* Allies — bottom-left cluster, staggered like the references */}
