@@ -46,6 +46,29 @@ npm start
 
 ## Cómo se juega
 
+### Cinemática de Quantum Nova
+
+La primera visita a `/` reproduce una secuencia continua de 29 segundos (menos de 30 con el fundido final), diseñada primero para móvil, con
+cámara, portales e ilustraciones SVG animadas. No hay navegación manual entre
+escenas. **PAUSAR** detiene el reloj y los efectos; **SALTAR INTRODUCCIÓN** lleva
+a la carátula. **INICIAR AVENTURA** monta el `BattleScreen` existente.
+
+Al finalizar o saltar, se guarda únicamente `quantum-nova:cinematic:v1` en
+`localStorage`. Las siguientes visitas muestran directamente la carátula, donde
+se puede iniciar o **VOLVER A VER CINEMÁTICA**. Durante el juego, **Ver cinemática**
+permite repetirla sin desmontar la partida. Si el almacenamiento está bloqueado,
+el flujo funciona sin persistencia. **Leer historia** abre una transcripción accesible.
+
+Las ilustraciones originales usan CSS y Framer Motion, con adaptación a movimiento
+reducido. El sonido está silenciado inicialmente: el control activa tonos ambientales
+originales sintetizados con Web Audio, no una banda sonora ni una voz grabada.
+Superadox es ficticio, no una teoría física. No se añadieron dependencias npm.
+La cinemática se desmonta y libera su reloj, listeners y audio al entrar al combate.
+
+Pruebas automatizadas del flujo y tamaños de pantalla: [tests/README.md](tests/README.md).
+
+### Combate
+
 1. En la **Fase de Órdenes** haz clic en una carta de la mano para
    seleccionarla y luego pulsa **Confirmar objetivo** (cuesta 1 AP).
 2. Repite hasta gastar tus AP (1 por personaje vivo).

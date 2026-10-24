@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Quantum Command: Entangled Fates",
+  title: "Quantum Nova: La Rebelión del Multiverso",
   description:
-    "A turn-based quantum card battler. Command cards built on the physics of qubits, superposition and measurement.",
+    "Defiende el multiverso con la Rebelión Cuántica. Una aventura de cartas y combate por turnos.",
 };
 
 export default function RootLayout({
